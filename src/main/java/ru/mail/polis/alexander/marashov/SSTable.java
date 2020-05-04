@@ -18,17 +18,20 @@ public class SSTable implements Table {
 
     private FileChannel fileChannel;
     private int rowsCount;
-    private Integer[] offsets;
+    private int fileSize;
 
-    private final ByteBuffer intBuffer = ByteBuffer.allocate(Integer.BYTES);
-    private final ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
+    private static final ByteBuffer intBuffer = ByteBuffer.allocate(Integer.BYTES);
+    private static final ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
 
     /**
      * Creates SSTable from file.
      */
     public SSTable(@NotNull final File file) {
         try {
-            deserialize(file);
+            fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
+            fileSize = (int) fileChannel.size();
+            fileChannel.read(intBuffer.rewind(), fileChannel.size() - Integer.BYTES);
+            rowsCount = intBuffer.rewind().getInt();
         } catch (IOException e) {
             log.error(e.getMessage());
         }
@@ -49,33 +52,24 @@ public class SSTable implements Table {
             iterator.forEachRemaining(it -> {
                 indexesBuffer.putInt(position.get());
 
-                // key length, key, timestamp
-                int size = Integer.BYTES + it.getKey().capacity() + Long.BYTES;
-
                 long timestamp = it.getValue().getTimestamp();
                 final boolean isTombstone = it.getValue().isTombstone();
 
                 if (isTombstone) {
                     timestamp *= -1;
-                } else {
-                    // + value length, value
-                    size += Integer.BYTES + it.getValue().getData().capacity();
                 }
 
-                final ByteBuffer buffer = ByteBuffer.allocate(size);
-                buffer.putInt(it.getKey().capacity());
-                buffer.put(it.getKey());
-                buffer.putLong(timestamp);
-
-                if (!isTombstone) {
-                    buffer.putInt(it.getValue().getData().capacity());
-                    buffer.put(it.getValue().getData());
-                }
-
-                buffer.flip();
-
+                intBuffer.rewind().putInt(it.getKey().capacity()).rewind();
+                longBuffer.rewind().putLong(timestamp).rewind();
                 try {
-                    position.addAndGet(channel.write(buffer));
+                    position.addAndGet(channel.write(intBuffer));
+                    position.addAndGet(channel.write(it.getKey()));
+                    position.addAndGet(channel.write(longBuffer));
+                    if (!isTombstone) {
+                        intBuffer.rewind().putInt(it.getValue().getData().capacity()).rewind();
+                        position.addAndGet(channel.write(intBuffer));
+                        position.addAndGet(channel.write(it.getValue().getData()));
+                    }
                 } catch (IOException e) {
                     log.error(e.getMessage());
                 }
@@ -90,25 +84,6 @@ public class SSTable implements Table {
             } catch (IOException e) {
                 log.error(e.getMessage());
             }
-        }
-    }
-
-    private void deserialize(final File file) throws IOException {
-        fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
-
-        final ByteBuffer rowsCountBuffer = ByteBuffer.allocate(Integer.BYTES);
-        fileChannel.read(rowsCountBuffer, fileChannel.size() - Integer.BYTES);
-        rowsCountBuffer.flip();
-
-        rowsCount = rowsCountBuffer.getInt();
-        offsets = new Integer[rowsCount];
-
-        final ByteBuffer indexesBuffer = ByteBuffer.allocate(rowsCount * Integer.BYTES);
-        fileChannel.read(indexesBuffer, fileChannel.size() - (rowsCount + 1) * Integer.BYTES);
-        indexesBuffer.flip();
-
-        for (int i = 1; i <= rowsCount; ++i) {
-            offsets[i - 1] = indexesBuffer.getInt();
         }
     }
 
@@ -133,16 +108,23 @@ public class SSTable implements Table {
         return buffer;
     }
 
+    private int getOffset(int row) throws IOException {
+        intBuffer.rewind();
+        fileChannel.read(intBuffer, fileSize - (1 + rowsCount - row) * Integer.BYTES);
+        intBuffer.rewind();
+        return intBuffer.getInt();
+    }
+
     @NotNull
     private ByteBuffer key(final int row) throws IOException {
-        final int offset = offsets[row];
+        final int offset = getOffset(row);
         final int keyLength = getIntFrom(offset);
         return getFrom(offset + Integer.BYTES, keyLength);
     }
 
     @NotNull
     private Value value(final int row) throws IOException {
-        final int offset = offsets[row];
+        final int offset = getOffset(row);
         final int keyLength = getIntFrom(offset);
 
         long timestamp = getLongFrom(offset + Integer.BYTES + keyLength);
@@ -165,27 +147,18 @@ public class SSTable implements Table {
         int left = 0;
         int right = rowsCount - 1;
 
-        ByteBuffer foundKey;
-        while (left < right - 1) {
-            final int center = (left + right + 1) / 2;
-            foundKey = key(center);
-            if (from.compareTo(foundKey) <= 0) {
-                right = center;
+        while (left <= right) {
+            final int center = (left + right) / 2;
+            int compare = key(center).compareTo(from);
+            if (compare < 0) {
+                left = center + 1;
+            } else if (compare > 0) {
+                right = center - 1;
             } else {
-                left = center;
+                return center;
             }
         }
-        final int leftToFrom = key(left).compareTo(from);
-        if (leftToFrom >= 0) {
-            return left;
-        } else {
-            final int rightToFrom = key(right).compareTo(from);
-            if (rightToFrom < 0) {
-                return rowsCount;
-            } else {
-                return right;
-            }
-        }
+        return left;
     }
 
     @NotNull
@@ -194,6 +167,7 @@ public class SSTable implements Table {
         return new Iterator<>() {
 
             private int rowIndex = binarySearch(from);
+
             @Override
             public boolean hasNext() {
                 return rowIndex < rowsCount;
@@ -207,8 +181,8 @@ public class SSTable implements Table {
                     return cell;
                 } catch (IOException e) {
                     log.error(e.getMessage());
+                    return null;
                 }
-                return null;
             }
         };
     }
@@ -225,12 +199,7 @@ public class SSTable implements Table {
 
     @Override
     public long sizeInBytes() {
-        try {
-            return fileChannel.size();
-        } catch (IOException e) {
-            log.error(e.getMessage());
-        }
-        return -1;
+        return fileSize;
     }
 
     @Override
