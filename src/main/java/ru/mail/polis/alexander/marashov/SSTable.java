@@ -20,6 +20,12 @@ public class SSTable implements Table {
     private int rowsCount;
     private Integer[] offsets;
 
+    private final ByteBuffer intBuffer = ByteBuffer.allocate(Integer.BYTES);
+    private ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
+
+    /**
+     * Creates SSTable from file.
+     */
     public SSTable(@NotNull final File file) {
         try {
             deserialize(file);
@@ -28,70 +34,75 @@ public class SSTable implements Table {
         }
     }
 
-    public static void serialize(final Iterator<Cell> iterator, final int rowsCount, final File file) throws IOException {
-        FileChannel fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
-        ByteBuffer indexesBuffer = ByteBuffer.allocate((rowsCount + 1) * Integer.BYTES);
+    /**
+     * Saves cells to file.
+     */
+    public static void serialize(final Iterator<Cell> iterator,
+                                 final int rowsCount, final File file) throws IOException {
+        try (FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
+            final ByteBuffer indexesBuffer = ByteBuffer.allocate((rowsCount + 1) * Integer.BYTES);
 
-        final AtomicInteger position = new AtomicInteger(0);
-        final AtomicInteger currentRowIndex = new AtomicInteger(0);
+            final AtomicInteger position = new AtomicInteger(0);
+            final AtomicInteger currentRowIndex = new AtomicInteger(0);
 
-        iterator.forEachRemaining(it -> {
-            indexesBuffer.putInt(position.get());
+            iterator.forEachRemaining(it -> {
+                indexesBuffer.putInt(position.get());
 
-            // key length, key, timestamp
-            int size = Integer.BYTES + it.getKey().capacity() + Long.BYTES;
+                // key length, key, timestamp
+                int size = Integer.BYTES + it.getKey().capacity() + Long.BYTES;
 
-            long timestamp = it.getValue().getTimestamp();
-            boolean isTombstone = it.getValue().isTombstone();
+                long timestamp = it.getValue().getTimestamp();
+                final boolean isTombstone = it.getValue().isTombstone();
 
-            if (isTombstone) {
-                timestamp *= -1;
-            } else {
-                // + value length, value
-                size += Integer.BYTES + it.getValue().getData().capacity();
-            }
+                if (isTombstone) {
+                    timestamp *= -1;
+                } else {
+                    // + value length, value
+                    size += Integer.BYTES + it.getValue().getData().capacity();
+                }
 
-            ByteBuffer buffer = ByteBuffer.allocate(size);
-            buffer.putInt(it.getKey().capacity());
-            buffer.put(it.getKey());
-            buffer.putLong(timestamp);
+                final ByteBuffer buffer = ByteBuffer.allocate(size);
+                buffer.putInt(it.getKey().capacity());
+                buffer.put(it.getKey());
+                buffer.putLong(timestamp);
 
-            if (!isTombstone) {
-                buffer.putInt(it.getValue().getData().capacity());
-                buffer.put(it.getValue().getData());
-            }
+                if (!isTombstone) {
+                    buffer.putInt(it.getValue().getData().capacity());
+                    buffer.put(it.getValue().getData());
+                }
 
-            buffer.flip();
+                buffer.flip();
 
+                try {
+                    position.addAndGet(channel.write(buffer));
+                } catch (IOException e) {
+                    log.error(e.getMessage());
+                }
+
+                currentRowIndex.incrementAndGet();
+            });
+
+            indexesBuffer.putInt(rowsCount);
+            indexesBuffer.flip();
             try {
-                position.addAndGet(fileChannel.write(buffer));
+                channel.write(indexesBuffer);
             } catch (IOException e) {
                 log.error(e.getMessage());
             }
-
-            currentRowIndex.incrementAndGet();
-        });
-
-        indexesBuffer.putInt(rowsCount);
-        indexesBuffer.flip();
-        try {
-            fileChannel.write(indexesBuffer);
-        } catch (IOException e) {
-            log.error(e.getMessage());
         }
     }
 
     private void deserialize(final File file) throws IOException {
         fileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
 
-        ByteBuffer rowsCountBuffer = ByteBuffer.allocate(Integer.BYTES);
+        final ByteBuffer rowsCountBuffer = ByteBuffer.allocate(Integer.BYTES);
         fileChannel.read(rowsCountBuffer, fileChannel.size() - Integer.BYTES);
         rowsCountBuffer.flip();
 
         rowsCount = rowsCountBuffer.getInt();
         offsets = new Integer[rowsCount];
 
-        ByteBuffer indexesBuffer = ByteBuffer.allocate(rowsCount * Integer.BYTES);
+        final ByteBuffer indexesBuffer = ByteBuffer.allocate(rowsCount * Integer.BYTES);
         fileChannel.read(indexesBuffer, fileChannel.size() - (rowsCount + 1) * Integer.BYTES);
         indexesBuffer.flip();
 
@@ -100,7 +111,6 @@ public class SSTable implements Table {
         }
     }
 
-    private ByteBuffer intBuffer = ByteBuffer.allocate(Integer.BYTES);
     private int getIntFrom(final int offset) throws IOException {
         intBuffer.position(0);
         fileChannel.read(intBuffer, offset);
@@ -108,7 +118,6 @@ public class SSTable implements Table {
         return intBuffer.getInt();
     }
 
-    private ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
     private long getLongFrom(final int offset) throws IOException {
         longBuffer.position(0);
         fileChannel.read(longBuffer, offset);
@@ -117,7 +126,7 @@ public class SSTable implements Table {
     }
 
     private ByteBuffer getFrom(final int offset, final int size) throws IOException {
-        ByteBuffer buffer = ByteBuffer.allocate(size);
+        final ByteBuffer buffer = ByteBuffer.allocate(size);
         fileChannel.read(buffer, offset);
         buffer.flip();
         return buffer;
@@ -142,14 +151,14 @@ public class SSTable implements Table {
         }
 
         final int valueLength = getIntFrom(offset + Integer.BYTES + keyLength + Long.BYTES);
-        ByteBuffer valueBuffer = getFrom(
+        final ByteBuffer valueBuffer = getFrom(
                 offset + Integer.BYTES + keyLength + Long.BYTES + Integer.BYTES,
                 valueLength
         );
         return new Value(timestamp, valueBuffer);
     }
 
-    private int binarySearch(@NotNull ByteBuffer from) throws IOException {
+    private int binarySearch(@NotNull final ByteBuffer from) throws IOException {
         assert rowsCount > 0;
 
         int left = 0;
@@ -157,7 +166,7 @@ public class SSTable implements Table {
 
         ByteBuffer foundKey;
         while (left < right - 1) {
-            int center = (left + right + 1) / 2;
+            final int center = (left + right + 1) / 2;
             foundKey = key(center);
             if (from.compareTo(foundKey) <= 0) {
                 right = center;
@@ -180,7 +189,7 @@ public class SSTable implements Table {
 
     @NotNull
     @Override
-    public Iterator<Cell> iterator(@NotNull ByteBuffer from) throws IOException {
+    public Iterator<Cell> iterator(@NotNull final ByteBuffer from) throws IOException {
         return new Iterator<>() {
 
             private int rowIndex = binarySearch(from);
@@ -192,7 +201,7 @@ public class SSTable implements Table {
             @Override
             public Cell next() {
                 try {
-                    Cell cell = new Cell(key(rowIndex), value(rowIndex));
+                    final Cell cell = new Cell(key(rowIndex), value(rowIndex));
                     ++rowIndex;
                     return cell;
                 } catch (IOException e) {
@@ -204,12 +213,12 @@ public class SSTable implements Table {
     }
 
     @Override
-    public void upsert(@NotNull ByteBuffer key, @NotNull ByteBuffer value) throws IOException {
+    public void upsert(@NotNull final ByteBuffer key, @NotNull final ByteBuffer value) throws IOException {
         throw new UnsupportedOperationException("Immutable!");
     }
 
     @Override
-    public void remove(@NotNull ByteBuffer key) throws IOException {
+    public void remove(@NotNull final ByteBuffer key) throws IOException {
         throw new UnsupportedOperationException("Immutable!");
     }
 

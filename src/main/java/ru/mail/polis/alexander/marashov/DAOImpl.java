@@ -21,6 +21,11 @@ import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 
+/**
+ * Persistent storage.
+ *
+ * @author Alexander Marashov
+ */
 public class DAOImpl implements DAO {
 
     private static final Logger log = LoggerFactory.getLogger(DAOImpl.class);
@@ -35,36 +40,36 @@ public class DAOImpl implements DAO {
     private Table memTable = new MemTable();
     private final NavigableMap<Integer, Table> ssTables;
 
-    private int generation = 0;
+    private int generation;
 
     public DAOImpl(@NotNull final File storage, final long flushThreshold) throws IOException {
         assert flushThreshold > 0L;
         this.flushThreshold = flushThreshold;
         this.storage = storage;
         this.ssTables = new TreeMap<>();
-        try (final Stream<Path> stream = Files.list(storage.toPath())) {
+        try (Stream<Path> stream = Files.list(storage.toPath())) {
             stream.filter(p -> p.toString().endsWith(SUFFIX))
                     .forEach(f -> {
-                        String name = f.getFileName().toString();
-                        final int generation = Integer.parseInt(name.substring(0, name.indexOf(SUFFIX)));
-                        ssTables.put(generation, new SSTable(f.toFile()));
-                        this.generation = Math.max(this.generation, generation);
+                        final String name = f.getFileName().toString();
+                        final int gen = Integer.parseInt(name.substring(0, name.indexOf(SUFFIX)));
+                        ssTables.put(gen, new SSTable(f.toFile()));
+                        generation = Math.max(generation, gen);
                     });
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error(e.getLocalizedMessage());
         }
     }
 
     @NotNull
     @Override
-    public Iterator<Record> iterator(@NotNull ByteBuffer from) throws IOException {
+    public Iterator<Record> iterator(@NotNull final ByteBuffer from) throws IOException {
         final List<Iterator<Cell>> iters = new ArrayList<>(ssTables.size() + 1);
-        Iterator<Cell> memIter = memTable.iterator(from);
+        final Iterator<Cell> memIter = memTable.iterator(from);
         if (memIter.hasNext()) {
             iters.add(memIter);
         }
-        for (Table t : ssTables.descendingMap().values()) {
-            Iterator<Cell> tableIter = t.iterator(from);
+        for (final Table t : ssTables.descendingMap().values()) {
+            final Iterator<Cell> tableIter = t.iterator(from);
             if (tableIter.hasNext()) {
                 iters.add(tableIter);
             }
@@ -76,7 +81,7 @@ public class DAOImpl implements DAO {
     }
 
     @Override
-    public void upsert(@NotNull ByteBuffer key, @NotNull ByteBuffer value) throws IOException {
+    public void upsert(@NotNull final ByteBuffer key, @NotNull final ByteBuffer value) throws IOException {
         memTable.upsert(key.asReadOnlyBuffer(), value.asReadOnlyBuffer());
         if (memTable.sizeInBytes() > flushThreshold) {
             flush();
@@ -84,13 +89,16 @@ public class DAOImpl implements DAO {
     }
 
     @Override
-    public void remove(@NotNull ByteBuffer key) throws IOException {
+    public void remove(@NotNull final ByteBuffer key) throws IOException {
         memTable.remove(key.asReadOnlyBuffer());
         if (memTable.sizeInBytes() > flushThreshold) {
             flush();
         }
     }
 
+    /**
+     * Saving data on the disk.
+     */
     public void flush() throws IOException {
         final File file = new File(storage, generation + TEMP);
         SSTable.serialize(

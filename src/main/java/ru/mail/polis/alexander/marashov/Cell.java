@@ -5,7 +5,7 @@ import org.jetbrains.annotations.NotNull;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
 
-final public class Cell {
+final class Cell {
 
     public static final Comparator<Cell> COMPARATOR =
             Comparator.comparing(Cell::getKey).thenComparing(Cell::getValue);

@@ -20,7 +20,7 @@ public class MemTable implements Table {
 
     @NotNull
     @Override
-    public Iterator<Cell> iterator(@NotNull ByteBuffer from) throws IOException {
+    public Iterator<Cell> iterator(@NotNull final ByteBuffer from) throws IOException {
         return map.tailMap(from)
                 .entrySet()
                 .stream()
@@ -29,9 +29,9 @@ public class MemTable implements Table {
     }
 
     @Override
-    public void upsert(@NotNull ByteBuffer key, @NotNull ByteBuffer value) throws IOException {
+    public void upsert(@NotNull final ByteBuffer key, @NotNull final ByteBuffer value) throws IOException {
         sizeInBytes += value.capacity();
-        Value prev = map.put(key, new Value(System.currentTimeMillis(), value));
+        final Value prev = map.put(key, new Value(System.currentTimeMillis(), value));
         if (prev == null) {
             // + key and timestamp
             sizeInBytes += key.capacity() + Long.BYTES;
@@ -42,8 +42,8 @@ public class MemTable implements Table {
     }
 
     @Override
-    public void remove(@NotNull ByteBuffer key) throws IOException {
-        Value prev = map.put(key, new Value(System.currentTimeMillis()));
+    public void remove(@NotNull final ByteBuffer key) throws IOException {
+        final Value prev = map.put(key, new Value(System.currentTimeMillis()));
         if (prev == null) {
             // + key and timestamp
             sizeInBytes += key.capacity() + Long.BYTES;
