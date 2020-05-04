@@ -42,7 +42,13 @@ public class DAOImpl implements DAO {
 
     private int generation;
 
-    public DAOImpl(@NotNull final File storage, final long flushThreshold) throws IOException {
+    /**
+     * Creates DAO from storage file with flushThreshold data limit.
+     * @param storage
+     * @param flushThreshold
+     * @throws IOException
+     */
+    public DAOImpl(@NotNull final File storage, final long flushThreshold) {
         assert flushThreshold > 0L;
         this.flushThreshold = flushThreshold;
         this.storage = storage;
@@ -51,9 +57,12 @@ public class DAOImpl implements DAO {
             stream.filter(p -> p.toString().endsWith(SUFFIX))
                     .forEach(f -> {
                         final String name = f.getFileName().toString();
-                        final int gen = Integer.parseInt(name.substring(0, name.indexOf(SUFFIX)));
-                        ssTables.put(gen, new SSTable(f.toFile()));
-                        generation = Math.max(generation, gen);
+                        final String genStr = name.substring(0, name.indexOf(SUFFIX));
+                        if (genStr.matches("[0-9]+")) {
+                            final int gen = Integer.parseInt(genStr);
+                            ssTables.put(gen, new SSTable(f.toFile()));
+                            generation = Math.max(generation, gen);
+                        }
                     });
         } catch (IOException e) {
             log.error(e.getLocalizedMessage());
@@ -109,6 +118,7 @@ public class DAOImpl implements DAO {
         final File dst = new File(storage, generation + SUFFIX);
         Files.move(file.toPath(), dst.toPath(), StandardCopyOption.ATOMIC_MOVE);
 
+        memTable.close();
         memTable = new MemTable();
         ssTables.put(generation, new SSTable(dst));
         ++generation;
@@ -119,5 +129,12 @@ public class DAOImpl implements DAO {
         if (memTable.size() > 0) {
             flush();
         }
+        ssTables.forEach((i, t) -> {
+            try {
+                t.close();
+            } catch (IOException e) {
+                log.error(e.getLocalizedMessage());
+            }
+        });
     }
 }

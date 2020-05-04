@@ -62,4 +62,9 @@ public class MemTable implements Table {
     public int size() {
         return map.size();
     }
+
+    @Override
+    public void close() throws IOException {
+        map.clear();
+    }
 }

@@ -21,7 +21,7 @@ public class SSTable implements Table {
     private Integer[] offsets;
 
     private final ByteBuffer intBuffer = ByteBuffer.allocate(Integer.BYTES);
-    private ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
+    private final ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
 
     /**
      * Creates SSTable from file.
@@ -39,7 +39,8 @@ public class SSTable implements Table {
      */
     public static void serialize(final Iterator<Cell> iterator,
                                  final int rowsCount, final File file) throws IOException {
-        try (FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
+        try (FileChannel channel =
+                     FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
             final ByteBuffer indexesBuffer = ByteBuffer.allocate((rowsCount + 1) * Integer.BYTES);
 
             final AtomicInteger position = new AtomicInteger(0);
@@ -235,5 +236,10 @@ public class SSTable implements Table {
     @Override
     public int size() {
         return rowsCount;
+    }
+
+    @Override
+    public void close() throws IOException {
+        fileChannel.close();
     }
 }
