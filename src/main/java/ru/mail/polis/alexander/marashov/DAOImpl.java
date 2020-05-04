@@ -44,9 +44,6 @@ public class DAOImpl implements DAO {
 
     /**
      * Creates DAO from storage file with flushThreshold data limit.
-     * @param storage
-     * @param flushThreshold
-     * @throws IOException
      */
     public DAOImpl(@NotNull final File storage, final long flushThreshold) {
         assert flushThreshold > 0L;
