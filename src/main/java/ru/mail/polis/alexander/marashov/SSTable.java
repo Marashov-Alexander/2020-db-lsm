@@ -108,7 +108,7 @@ public class SSTable implements Table {
         return buffer;
     }
 
-    private int getOffset(int row) throws IOException {
+    private int getOffset(final int row) throws IOException {
         intBuffer.rewind();
         fileChannel.read(intBuffer, fileSize - (1 + rowsCount - row) * Integer.BYTES);
         intBuffer.rewind();
@@ -149,7 +149,7 @@ public class SSTable implements Table {
 
         while (left <= right) {
             final int center = (left + right) / 2;
-            int compare = key(center).compareTo(from);
+            final int compare = key(center).compareTo(from);
             if (compare < 0) {
                 left = center + 1;
             } else if (compare > 0) {
