@@ -70,15 +70,9 @@ public class DAOImpl implements DAO {
     @Override
     public Iterator<Record> iterator(@NotNull final ByteBuffer from) throws IOException {
         final List<Iterator<Cell>> iters = new ArrayList<>(ssTables.size() + 1);
-        final Iterator<Cell> memIter = memTable.iterator(from);
-        if (memIter.hasNext()) {
-            iters.add(memIter);
-        }
+        iters.add(memTable.iterator(from));
         for (final Table t : ssTables.descendingMap().values()) {
-            final Iterator<Cell> tableIter = t.iterator(from);
-            if (tableIter.hasNext()) {
-                iters.add(tableIter);
-            }
+            iters.add(t.iterator(from));
         }
         final Iterator<Cell> merged = Iterators.mergeSorted(iters, Cell.COMPARATOR);
         final Iterator<Cell> fresh = Iters.collapseEquals(merged, Cell::getKey);

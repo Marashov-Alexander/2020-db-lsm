@@ -43,7 +43,7 @@ public class MemTable implements Table {
 
     @Override
     public void remove(@NotNull final ByteBuffer key) throws IOException {
-        final Value prev = map.put(key, new Value(System.currentTimeMillis()));
+        final Value prev = map.put(key, new Value(System.currentTimeMillis(), null));
         if (prev == null) {
             // + key and timestamp
             sizeInBytes += key.capacity() + Long.BYTES;

@@ -11,20 +11,12 @@ final class Value implements Comparable<Value> {
 
     /**
      * Creates the Value instance.
+     * Creates the tombstone if data is null
      */
-    public Value(final long timestamp, @NotNull final ByteBuffer data) {
+    public Value(final long timestamp, final ByteBuffer data) {
         assert timestamp > 0L;
         this.timestamp = timestamp;
         this.data = data;
-    }
-
-    /**
-     * Creates the Value instance for tombstone.
-     */
-    public Value(final long timestamp) {
-        assert timestamp > 0L;
-        this.timestamp = timestamp;
-        data = null;
     }
 
     public boolean isTombstone() {

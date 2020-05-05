@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
@@ -40,8 +41,11 @@ public class SSTable implements Table {
     /**
      * Saves cells to file.
      */
-    public static void serialize(final Iterator<Cell> iterator,
-                                 final int rowsCount, final File file) throws IOException {
+    public static void serialize(
+            final Iterator<Cell> iterator,
+            final int rowsCount,
+            final File file
+    ) throws IOException {
         try (FileChannel channel =
                      FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
             final ByteBuffer indexesBuffer = ByteBuffer.allocate((rowsCount + 1) * Integer.BYTES);
@@ -72,6 +76,7 @@ public class SSTable implements Table {
                     }
                 } catch (IOException e) {
                     log.error(e.getMessage());
+                    throw new UncheckedIOException(e);
                 }
 
                 currentRowIndex.incrementAndGet();
@@ -90,15 +95,13 @@ public class SSTable implements Table {
     private int getIntFrom(final int offset) throws IOException {
         intBuffer.position(0);
         fileChannel.read(intBuffer, offset);
-        intBuffer.flip();
-        return intBuffer.getInt();
+        return intBuffer.rewind().getInt();
     }
 
     private long getLongFrom(final int offset) throws IOException {
         longBuffer.position(0);
         fileChannel.read(longBuffer, offset);
-        longBuffer.flip();
-        return longBuffer.getLong();
+        return longBuffer.rewind().getLong();
     }
 
     private ByteBuffer getFrom(final int offset, final int size) throws IOException {
@@ -127,18 +130,14 @@ public class SSTable implements Table {
         final int offset = getOffset(row);
         final int keyLength = getIntFrom(offset);
 
-        long timestamp = getLongFrom(offset + Integer.BYTES + keyLength);
-        if (timestamp < 0) {
-            timestamp *= -1;
-            return new Value(timestamp);
-        }
-
-        final int valueLength = getIntFrom(offset + Integer.BYTES + keyLength + Long.BYTES);
-        final ByteBuffer valueBuffer = getFrom(
-                offset + Integer.BYTES + keyLength + Long.BYTES + Integer.BYTES,
-                valueLength
-        );
-        return new Value(timestamp, valueBuffer);
+        final long timestamp = getLongFrom(offset + Integer.BYTES + keyLength);
+        final ByteBuffer valueBuffer = timestamp > 0
+                ? getFrom(
+                        offset + Integer.BYTES + keyLength + Long.BYTES + Integer.BYTES,
+                        getIntFrom(offset + Integer.BYTES + keyLength + Long.BYTES)
+                )
+                : null;
+        return new Value(timestamp & 0x7fffffff, valueBuffer);
     }
 
     private int binarySearch(@NotNull final ByteBuffer from) throws IOException {
