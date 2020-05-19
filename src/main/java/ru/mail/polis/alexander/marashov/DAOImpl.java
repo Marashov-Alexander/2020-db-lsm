@@ -20,7 +20,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NavigableMap;
 import java.util.TreeMap;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import java.util.stream.Stream;
 
 /**
@@ -52,20 +52,10 @@ public class DAOImpl implements DAO {
         this.flushThreshold = flushThreshold;
         this.storage = storage;
         this.ssTables = new TreeMap<>();
-        try (Stream<Path> stream = Files.list(storage.toPath())) {
-            stream.filter(p -> p.toString().endsWith(SUFFIX))
-                    .forEach(f -> {
-                        final String name = f.getFileName().toString();
-                        final String genStr = name.substring(0, name.indexOf(SUFFIX));
-                        if (genStr.matches("[0-9]+")) {
-                            final int gen = Integer.parseInt(genStr);
-                            ssTables.put(gen, new SSTable(f.toFile()));
-                            generation = Math.max(generation, gen);
-                        }
-                    });
-        } catch (IOException e) {
-            log.error(e.getLocalizedMessage());
-        }
+        doWithFiles(storage.toPath(), (gen, path) -> {
+            ssTables.put(gen, new SSTable(path.toFile()));
+            generation = Math.max(generation, gen);
+        });
         ++generation;
     }
 
@@ -151,20 +141,26 @@ public class DAOImpl implements DAO {
         });
 
         mergeTables(tripleList);
-        deleteTables(lastGen);
+        doWithFiles(storage.toPath(), (gen, path) -> {
+            if (gen < lastGen) {
+                try {
+                    Files.delete(path);
+                } catch (IOException e) {
+                    log.error(e.getMessage());
+                }
+            }
+        });
     }
 
-    private void deleteTables(final int lastGen) {
-        try (Stream<Path> stream = Files.list(storage.toPath())) {
+    private void doWithFiles(final Path storagePath, final BiConsumer<Integer, Path> genBiConsumer) {
+        try (Stream<Path> stream = Files.list(storagePath)) {
             stream.filter(p -> p.toString().endsWith(SUFFIX))
-                    .forEach(f -> {
-                        final String name = f.getFileName().toString();
+                    .forEach(path -> {
+                        final String name = path.getFileName().toString();
                         final String genStr = name.substring(0, name.indexOf(SUFFIX));
                         if (genStr.matches("[0-9]+")) {
                             final int gen = Integer.parseInt(genStr);
-                            if (gen < lastGen) {
-                                f.toFile().delete();
-                            }
+                            genBiConsumer.accept(gen, path);
                         }
                     });
         } catch (IOException e) {
@@ -175,34 +171,40 @@ public class DAOImpl implements DAO {
     private void mergeTables(final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList) throws IOException {
         final HashMap<ByteBuffer, List<Integer>> map = new HashMap<>();
         while (true) {
-            Cell minCell = null;
-            for (final Triple<Integer, Iterator<Cell>, Cell> triple : tripleList) {
-                final Cell cell = triple.third;
-                if (cell != null) {
-                    final List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
-                    tableIndexesList.add(triple.first);
-                    if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
-                        minCell = cell;
-                    }
-                }
-            }
-
+            Cell minCell = getMinCell(tripleList, map);
             if (minCell == null) {
                 // end of compaction
                 break;
+            }
+            final List<Integer> tableIndexesList = map.get(minCell.getKey());
+            for (final Integer index : tableIndexesList) {
+                final Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
+                triple.third = triple.second.hasNext() ? triple.second.next() : null;
+            }
+            if (minCell.getValue().isTombstone()) {
+                remove(minCell.getKey());
             } else {
-                final List<Integer> tableIndexesList = map.get(minCell.getKey());
-                for (final Integer index : tableIndexesList) {
-                    final Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
-                    triple.third = triple.second.hasNext() ? triple.second.next() : null;
-                }
-                if (minCell.getValue().isTombstone()) {
-                    remove(minCell.getKey());
-                } else {
-                    upsert(minCell.getKey(), minCell.getValue().getData());
+                upsert(minCell.getKey(), minCell.getValue().getData());
+            }
+        }
+    }
+
+    private Cell getMinCell(
+            final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList,
+            final HashMap<ByteBuffer, List<Integer>> map
+    ) {
+        map.clear();
+        Cell minCell = null;
+        for (final Triple<Integer, Iterator<Cell>, Cell> triple : tripleList) {
+            final Cell cell = triple.third;
+            if (cell != null) {
+                final List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
+                tableIndexesList.add(triple.first);
+                if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
+                    minCell = cell;
                 }
             }
-            map.clear();
         }
+        return minCell;
     }
 }
