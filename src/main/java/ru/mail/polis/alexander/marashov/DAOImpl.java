@@ -18,9 +18,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -66,6 +66,7 @@ public class DAOImpl implements DAO {
         } catch (IOException e) {
             log.error(e.getLocalizedMessage());
         }
+        ++generation;
     }
 
     @NotNull
@@ -133,26 +134,52 @@ public class DAOImpl implements DAO {
 
     @Override
     public void compact() throws IOException {
-        flush();
+        if (memTable.size() != 0) {
+            flush();
+        }
+        final int lastGen = generation;
 
         final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList = new ArrayList<>(ssTables.size());
         ssTables.forEach((gen, table) -> {
             try {
                 final Iterator<Cell> iterator = table.iterator(ByteBuffer.allocate(0));
                 final Cell bufferedCell = iterator.hasNext() ? iterator.next() : null;
-                tripleList.add(new Triple<>(gen, iterator, bufferedCell));
+                tripleList.add(new Triple<>(gen - 1, iterator, bufferedCell));
             } catch (IOException e) {
                 log.error(e.getMessage());
             }
         });
 
+        mergeTables(tripleList);
+        deleteTables(lastGen);
+    }
+
+    private void deleteTables(final int lastGen) {
+        try (Stream<Path> stream = Files.list(storage.toPath())) {
+            stream.filter(p -> p.toString().endsWith(SUFFIX))
+                    .forEach(f -> {
+                        final String name = f.getFileName().toString();
+                        final String genStr = name.substring(0, name.indexOf(SUFFIX));
+                        if (genStr.matches("[0-9]+")) {
+                            final int gen = Integer.parseInt(genStr);
+                            if (gen < lastGen) {
+                                f.toFile().delete();
+                            }
+                        }
+                    });
+        } catch (IOException e) {
+            log.error(e.getLocalizedMessage());
+        }
+    }
+
+    private void mergeTables(final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList) throws IOException {
         final HashMap<ByteBuffer, List<Integer>> map = new HashMap<>();
         while (true) {
             Cell minCell = null;
             for (final Triple<Integer, Iterator<Cell>, Cell> triple : tripleList) {
                 final Cell cell = triple.third;
                 if (cell != null) {
-                    List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
+                    final List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
                     tableIndexesList.add(triple.first);
                     if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
                         minCell = cell;
@@ -160,16 +187,20 @@ public class DAOImpl implements DAO {
                 }
             }
 
-            if (minCell != null) {
-                List<Integer> tableIndexesList = map.get(minCell.getKey());
-                for (Integer index : tableIndexesList) {
-                    Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
-                    triple.third = triple.second.hasNext() ? triple.second.next() : null;
-                }
-                upsert(minCell.getKey(), minCell.getValue().getData());
-            } else {
+            if (minCell == null) {
                 // end of compaction
                 break;
+            } else {
+                final List<Integer> tableIndexesList = map.get(minCell.getKey());
+                for (final Integer index : tableIndexesList) {
+                    final Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
+                    triple.third = triple.second.hasNext() ? triple.second.next() : null;
+                }
+                if (minCell.getValue().isTombstone()) {
+                    remove(minCell.getKey());
+                } else {
+                    upsert(minCell.getKey(), minCell.getValue().getData());
+                }
             }
             map.clear();
         }
