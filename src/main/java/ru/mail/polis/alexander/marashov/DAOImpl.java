@@ -15,8 +15,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -127,5 +129,49 @@ public class DAOImpl implements DAO {
                 log.error(e.getLocalizedMessage());
             }
         });
+    }
+
+    @Override
+    public void compact() throws IOException {
+        flush();
+
+        final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList = new ArrayList<>(ssTables.size());
+        ssTables.forEach((gen, table) -> {
+            try {
+                final Iterator<Cell> iterator = table.iterator(ByteBuffer.allocate(0));
+                final Cell bufferedCell = iterator.hasNext() ? iterator.next() : null;
+                tripleList.add(new Triple<>(gen, iterator, bufferedCell));
+            } catch (IOException e) {
+                log.error(e.getMessage());
+            }
+        });
+
+        final HashMap<ByteBuffer, List<Integer>> map = new HashMap<>();
+        while (true) {
+            Cell minCell = null;
+            for (final Triple<Integer, Iterator<Cell>, Cell> triple : tripleList) {
+                final Cell cell = triple.third;
+                if (cell != null) {
+                    List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
+                    tableIndexesList.add(triple.first);
+                    if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
+                        minCell = cell;
+                    }
+                }
+            }
+
+            if (minCell != null) {
+                List<Integer> tableIndexesList = map.get(minCell.getKey());
+                for (Integer index : tableIndexesList) {
+                    Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
+                    triple.third = triple.second.hasNext() ? triple.second.next() : null;
+                }
+                upsert(minCell.getKey(), minCell.getValue().getData());
+            } else {
+                // end of compaction
+                break;
+            }
+            map.clear();
+        }
     }
 }
