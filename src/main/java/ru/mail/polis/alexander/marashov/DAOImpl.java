@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.function.BiConsumer;
@@ -169,9 +170,9 @@ public class DAOImpl implements DAO {
     }
 
     private void mergeTables(final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList) throws IOException {
-        final HashMap<ByteBuffer, List<Integer>> map = new HashMap<>();
+        final Map<ByteBuffer, List<Integer>> map = new HashMap<>();
         while (true) {
-            Cell minCell = getMinCell(tripleList, map);
+            final Cell minCell = getMinCell(tripleList, map);
             if (minCell == null) {
                 // end of compaction
                 break;
@@ -191,7 +192,7 @@ public class DAOImpl implements DAO {
 
     private Cell getMinCell(
             final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList,
-            final HashMap<ByteBuffer, List<Integer>> map
+            final Map<ByteBuffer, List<Integer>> map
     ) {
         map.clear();
         Cell minCell = null;

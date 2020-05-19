@@ -2,6 +2,7 @@ package ru.mail.polis.alexander.marashov;
 
 /*
 * Class with three template objects
+*
 * */
 public class Triple<F, S, T> {
 
@@ -11,6 +12,7 @@ public class Triple<F, S, T> {
 
     /*
      * Creates an object with three template objects
+     *
      * */
     public Triple(final F first, final S second, final T third) {
         this.first = first;
