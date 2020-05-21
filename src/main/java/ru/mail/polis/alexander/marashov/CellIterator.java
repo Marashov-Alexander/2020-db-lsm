@@ -14,7 +14,7 @@ public class CellIterator implements Iterator<Cell> {
     private final Map<ByteBuffer, List<Integer>> keyEqualityMap;
     private Cell minCell;
 
-    public CellIterator(List<TableIterator> tableIteratorList) {
+    public CellIterator(final List<TableIterator> tableIteratorList) {
         this.iterators = tableIteratorList;
         this.keyEqualityMap = new HashMap<>();
     }
