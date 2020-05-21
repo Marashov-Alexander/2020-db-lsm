@@ -66,5 +66,6 @@ public class MemTable implements Table {
     @Override
     public void close() throws IOException {
         map.clear();
+        sizeInBytes = 0;
     }
 }

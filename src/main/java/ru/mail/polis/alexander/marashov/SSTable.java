@@ -10,7 +10,9 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SSTable implements Table {
@@ -43,18 +45,16 @@ public class SSTable implements Table {
      */
     public static void serialize(
             final Iterator<Cell> iterator,
-            final int rowsCount,
             final File file
     ) throws IOException {
         try (FileChannel channel =
                      FileChannel.open(file.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)) {
-            final ByteBuffer indexesBuffer = ByteBuffer.allocate((rowsCount + 1) * Integer.BYTES);
-
+            final List<Integer> indexesList = new ArrayList<>();
             final AtomicInteger position = new AtomicInteger(0);
             final AtomicInteger currentRowIndex = new AtomicInteger(0);
 
             iterator.forEachRemaining(it -> {
-                indexesBuffer.putInt(position.get());
+                indexesList.add(position.get());
 
                 long timestamp = it.getValue().getTimestamp();
                 final boolean isTombstone = it.getValue().isTombstone();
@@ -82,7 +82,11 @@ public class SSTable implements Table {
                 currentRowIndex.incrementAndGet();
             });
 
-            indexesBuffer.putInt(rowsCount);
+            final ByteBuffer indexesBuffer = ByteBuffer.allocate((indexesList.size() + 1) * Integer.BYTES);
+            for (Integer i: indexesList) {
+                indexesBuffer.putInt(i);
+            }
+            indexesBuffer.putInt(indexesList.size());
             indexesBuffer.flip();
             try {
                 channel.write(indexesBuffer);

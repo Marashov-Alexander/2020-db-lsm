@@ -18,8 +18,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.NavigableMap;
+import java.util.NoSuchElementException;
 import java.util.TreeMap;
 import java.util.function.BiConsumer;
 import java.util.stream.Stream;
@@ -94,19 +94,18 @@ public class DAOImpl implements DAO {
      * Saving data on the disk.
      */
     public void flush() throws IOException {
-        final File file = new File(storage, generation + TEMP);
-        SSTable.serialize(
-                memTable.iterator(ByteBuffer.allocate(0)),
-                memTable.size(),
-                file
-        );
-        final File dst = new File(storage, generation + SUFFIX);
-        Files.move(file.toPath(), dst.toPath(), StandardCopyOption.ATOMIC_MOVE);
-
+        writeDataToFile(memTable.iterator(ByteBuffer.allocate(0)));
         memTable.close();
         memTable = new MemTable();
-        ssTables.put(generation, new SSTable(dst));
+    }
+
+    private void writeDataToFile(Iterator<Cell> cellIterator) throws IOException {
+        final File file = new File(storage, generation + TEMP);
+        SSTable.serialize(cellIterator, file);
+        final File dst = new File(storage, generation + SUFFIX);
+        Files.move(file.toPath(), dst.toPath(), StandardCopyOption.ATOMIC_MOVE);
         ++generation;
+        ssTables.put(generation, new SSTable(dst));
     }
 
     @Override
@@ -125,23 +124,74 @@ public class DAOImpl implements DAO {
 
     @Override
     public void compact() throws IOException {
-        if (memTable.size() != 0) {
-            flush();
-        }
         final int lastGen = generation;
 
-        final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList = new ArrayList<>(ssTables.size());
-        ssTables.forEach((gen, table) -> {
-            try {
-                final Iterator<Cell> iterator = table.iterator(ByteBuffer.allocate(0));
-                final Cell bufferedCell = iterator.hasNext() ? iterator.next() : null;
-                tripleList.add(new Triple<>(gen - 1, iterator, bufferedCell));
-            } catch (IOException e) {
-                log.error(e.getMessage());
-            }
-        });
+        final List<TableIterator> tableIteratorList = new ArrayList<>(ssTables.size() + 1);
+        int index = 0;
+        for (Table table: ssTables.values()) {
+            tableIteratorList.add(
+                    new TableIterator(index, table)
+            );
+            ++index;
+        }
+        tableIteratorList.add(new TableIterator(index, memTable));
 
-        mergeTables(tripleList);
+        Iterator<Cell> cellIterator = new Iterator<>() {
+
+            final List<TableIterator> iterators = tableIteratorList;
+            final HashMap<ByteBuffer, List<Integer>> keyEqualityMap = new HashMap<>();
+            Cell minCell;
+
+            @Override
+            public boolean hasNext() {
+                if (minCell != null) {
+                    return true;
+                }
+
+                minCell = getMinCell();
+                if (minCell == null) {
+                    return false;
+                }
+                final List<Integer> tableIndexesList = keyEqualityMap.get(minCell.getKey());
+                for (final Integer index : tableIndexesList) {
+                    iterators.get(index).next();
+                }
+                return true;
+
+            }
+
+            @Override
+            public Cell next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException("No more cells");
+                }
+                final Cell result = minCell;
+                minCell = null;
+                return result;
+            }
+
+            private Cell getMinCell() {
+                keyEqualityMap.clear();
+                Cell minCell = null;
+                for (final TableIterator tableIterator : iterators) {
+                    final Cell cell = tableIterator.bufferedCell;
+                    if (cell != null) {
+                        final List<Integer> tableIndexesList = keyEqualityMap.computeIfAbsent(
+                                cell.getKey(),
+                                k -> new ArrayList<>()
+                        );
+                        tableIndexesList.add(tableIterator.generation);
+                        if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
+                            minCell = cell;
+                        }
+                    }
+                }
+                return minCell;
+            }
+        };
+
+        writeDataToFile(cellIterator);
+
         doWithFiles(storage.toPath(), (gen, path) -> {
             if (gen < lastGen) {
                 try {
@@ -151,6 +201,8 @@ public class DAOImpl implements DAO {
                 }
             }
         });
+
+        memTable.close();
     }
 
     private void doWithFiles(final Path storagePath, final BiConsumer<Integer, Path> genBiConsumer) {
@@ -167,45 +219,5 @@ public class DAOImpl implements DAO {
         } catch (IOException e) {
             log.error(e.getLocalizedMessage());
         }
-    }
-
-    private void mergeTables(final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList) throws IOException {
-        final Map<ByteBuffer, List<Integer>> map = new HashMap<>();
-        while (true) {
-            final Cell minCell = getMinCell(tripleList, map);
-            if (minCell == null) {
-                // end of compaction
-                break;
-            }
-            final List<Integer> tableIndexesList = map.get(minCell.getKey());
-            for (final Integer index : tableIndexesList) {
-                final Triple<Integer, Iterator<Cell>, Cell> triple = tripleList.get(index);
-                triple.third = triple.second.hasNext() ? triple.second.next() : null;
-            }
-            if (minCell.getValue().isTombstone()) {
-                remove(minCell.getKey());
-            } else {
-                upsert(minCell.getKey(), minCell.getValue().getData());
-            }
-        }
-    }
-
-    private Cell getMinCell(
-            final List<Triple<Integer, Iterator<Cell>, Cell>> tripleList,
-            final Map<ByteBuffer, List<Integer>> map
-    ) {
-        map.clear();
-        Cell minCell = null;
-        for (final Triple<Integer, Iterator<Cell>, Cell> triple : tripleList) {
-            final Cell cell = triple.third;
-            if (cell != null) {
-                final List<Integer> tableIndexesList = map.computeIfAbsent(cell.getKey(), k -> new ArrayList<>());
-                tableIndexesList.add(triple.first);
-                if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
-                    minCell = cell;
-                }
-            }
-        }
-        return minCell;
     }
 }
