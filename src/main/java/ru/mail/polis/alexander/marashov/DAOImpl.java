@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.NoSuchElementException;
 import java.util.TreeMap;
@@ -99,7 +100,7 @@ public class DAOImpl implements DAO {
         memTable = new MemTable();
     }
 
-    private void writeDataToFile(Iterator<Cell> cellIterator) throws IOException {
+    private void writeDataToFile(final Iterator<Cell> cellIterator) throws IOException {
         final File file = new File(storage, generation + TEMP);
         SSTable.serialize(cellIterator, file);
         final File dst = new File(storage, generation + SUFFIX);
@@ -128,7 +129,7 @@ public class DAOImpl implements DAO {
 
         final List<TableIterator> tableIteratorList = new ArrayList<>(ssTables.size() + 1);
         int index = 0;
-        for (Table table: ssTables.values()) {
+        for (final Table table: ssTables.values()) {
             tableIteratorList.add(
                     new TableIterator(index, table)
             );
@@ -136,62 +137,8 @@ public class DAOImpl implements DAO {
         }
         tableIteratorList.add(new TableIterator(index, memTable));
 
-        Iterator<Cell> cellIterator = new Iterator<>() {
-
-            final List<TableIterator> iterators = tableIteratorList;
-            final HashMap<ByteBuffer, List<Integer>> keyEqualityMap = new HashMap<>();
-            Cell minCell;
-
-            @Override
-            public boolean hasNext() {
-                if (minCell != null) {
-                    return true;
-                }
-
-                minCell = getMinCell();
-                if (minCell == null) {
-                    return false;
-                }
-                final List<Integer> tableIndexesList = keyEqualityMap.get(minCell.getKey());
-                for (final Integer index : tableIndexesList) {
-                    iterators.get(index).next();
-                }
-                return true;
-
-            }
-
-            @Override
-            public Cell next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException("No more cells");
-                }
-                final Cell result = minCell;
-                minCell = null;
-                return result;
-            }
-
-            private Cell getMinCell() {
-                keyEqualityMap.clear();
-                Cell minCell = null;
-                for (final TableIterator tableIterator : iterators) {
-                    final Cell cell = tableIterator.bufferedCell;
-                    if (cell != null) {
-                        final List<Integer> tableIndexesList = keyEqualityMap.computeIfAbsent(
-                                cell.getKey(),
-                                k -> new ArrayList<>()
-                        );
-                        tableIndexesList.add(tableIterator.generation);
-                        if (minCell == null || minCell.getKey().compareTo(cell.getKey()) >= 0) {
-                            minCell = cell;
-                        }
-                    }
-                }
-                return minCell;
-            }
-        };
-
+        final Iterator<Cell> cellIterator = new CellIterator(tableIteratorList);
         writeDataToFile(cellIterator);
-
         doWithFiles(storage.toPath(), (gen, path) -> {
             if (gen < lastGen) {
                 try {
@@ -201,8 +148,8 @@ public class DAOImpl implements DAO {
                 }
             }
         });
-
         memTable.close();
+        memTable = new MemTable();
     }
 
     private void doWithFiles(final Path storagePath, final BiConsumer<Integer, Path> genBiConsumer) {

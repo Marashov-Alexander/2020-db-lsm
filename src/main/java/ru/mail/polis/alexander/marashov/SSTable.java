@@ -83,7 +83,7 @@ public class SSTable implements Table {
             });
 
             final ByteBuffer indexesBuffer = ByteBuffer.allocate((indexesList.size() + 1) * Integer.BYTES);
-            for (Integer i: indexesList) {
+            for (final Integer i: indexesList) {
                 indexesBuffer.putInt(i);
             }
             indexesBuffer.putInt(indexesList.size());
