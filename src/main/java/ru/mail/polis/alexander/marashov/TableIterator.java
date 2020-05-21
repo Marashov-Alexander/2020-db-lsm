@@ -4,12 +4,18 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
+/**
+ * Class for access to Table data with buffered Cell value.
+ */
 public class TableIterator {
 
     public Integer generation;
     public Iterator<Cell> cellIterator;
     public Cell bufferedCell;
 
+    /**
+     * Creates an TableIterator instance.
+     */
     public TableIterator(
             final Integer generation,
             final Table ssTable
