@@ -4,7 +4,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Comparator;
 import java.util.Iterator;
 
 /**
@@ -30,10 +29,6 @@ public final class TableIterator implements Comparable<TableIterator> {
 
     public void next() {
         bufferedCell = cellIterator.hasNext() ? cellIterator.next() : null;
-    }
-
-    public Integer getGeneration() {
-        return generation;
     }
 
     public Cell getBufferedCell() {
