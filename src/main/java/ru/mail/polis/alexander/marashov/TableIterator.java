@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Comparator;
 import java.util.Iterator;
 
 /**
@@ -11,8 +12,8 @@ import java.util.Iterator;
  */
 public final class TableIterator implements Comparable<TableIterator> {
 
-    private Integer generation;
-    private Iterator<Cell> cellIterator;
+    private final Integer generation;
+    private final Iterator<Cell> cellIterator;
     private Cell bufferedCell;
 
     /**
@@ -45,10 +46,10 @@ public final class TableIterator implements Comparable<TableIterator> {
             return 0;
         }
         final int comp = this.getBufferedCell().getKey().compareTo(o.getBufferedCell().getKey());
-        if (comp != 0) {
-            return comp;
+        if (comp == 0) {
+            return -this.generation.compareTo(o.generation);
         } else {
-            return this.getGeneration() < o.getGeneration() ? 1 : -1;
+            return comp;
         }
     }
 }
