@@ -102,8 +102,8 @@ public class DAOImpl implements DAO {
         SSTable.serialize(cellIterator, file);
         final File dst = new File(storage, generation + SUFFIX);
         Files.move(file.toPath(), dst.toPath(), StandardCopyOption.ATOMIC_MOVE);
-        ++generation;
         ssTables.put(generation, new SSTable(dst));
+        ++generation;
     }
 
     @Override
